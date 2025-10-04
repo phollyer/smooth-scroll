@@ -307,7 +307,28 @@ The element will remain at its current position.
 -}
 stopAnimation : String -> Model -> Model
 stopAnimation elementId (Model elementsDict) =
-    Model (Dict.remove elementId elementsDict)
+    case Dict.get elementId elementsDict of
+        Just elementData ->
+            let
+                currentPos =
+                    case elementData.animation of
+                        Just animState ->
+                            { x = animState.currentX, y = animState.currentY }
+
+                        Nothing ->
+                            { x = elementData.lastX, y = elementData.lastY }
+
+                updatedElementData =
+                    { elementData
+                        | lastX = currentPos.x
+                        , lastY = currentPos.y
+                        , animation = Nothing
+                    }
+            in
+            Model (Dict.insert elementId updatedElementData elementsDict)
+
+        Nothing ->
+            Model elementsDict
 
 
 {-| Get all current element positions
