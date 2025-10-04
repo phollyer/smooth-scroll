@@ -4,38 +4,55 @@ module SmoothMoveSub exposing
     , Axis(..)
     , Model
     , init
-    , update
-    , startAnimationTo
+    , step
     , subscriptions
+    , animateTo
+    , animateToWithConfig
+    , stopAnimation
     , isAnimating
-    , getCurrentPosition
-    , transformElement
+    , getPosition
+    , getAllPositions
+    , transform
     )
 
-{-|
+{-| A subscription-based animation library for smooth element movement.
+
+This module provides a subscription-based approach where animations are managed
+automatically through subscriptions to animation frames.
 
 
-# Config
+# Configuration
 
 @docs Config
 @docs defaultConfig
 @docs Axis
 
 
-# Model-Based API
+# State Management
 
 @docs Model
 @docs init
-@docs update
-@docs startAnimationTo
+@docs step
 @docs subscriptions
+
+
+# Animation Control
+
+@docs animateTo
+@docs animateToWithConfig
+@docs stopAnimation
+
+
+# State Queries
+
 @docs isAnimating
-@docs getCurrentPosition
+@docs getPosition
+@docs getAllPositions
 
 
 # Styling Helper
 
-@docs transformElement
+@docs transform
 
 -}
 
@@ -52,7 +69,7 @@ import Ease
 
 -}
 type alias Config =
-    { speed : Int
+    { speed : Float
     , easing : Ease.Easing
     , axis : Axis
     }
@@ -109,26 +126,37 @@ init =
     Model Dict.empty
 
 
-{-| Start an animation to a target position, automatically using the current position as the starting point
+{-| Start animating an element to a target position using default config
 
-This is a convenience function that combines getCurrentPosition with startAnimation.
-If the element has no current position, it defaults to (0, 0).
+If the element is already animating, it will smoothly transition to the new target.
+If the element has no current position, it starts from (0, 0).
 
     import SmoothMoveSub
 
     newModel =
-        SmoothMoveSub.startAnimationTo "my-element" 200 300 model.smoothMove
+        SmoothMoveSub.animateTo "my-element" 200 300 model.smoothMove
 
 -}
-startAnimationTo : String -> Float -> Float -> Model -> Model
-startAnimationTo elementId targetX targetY (Model elementsDict) =
+animateTo : String -> Float -> Float -> Model -> Model
+animateTo elementId targetX targetY model =
+    animateToWithConfig defaultConfig elementId targetX targetY model
+
+
+{-| Start animating an element to a target position with custom configuration
+
+    config =
+        { defaultConfig | speed = 600.0, easing = Ease.outQuint }
+
+    newModel =
+        SmoothMoveSub.animateToWithConfig config "my-element" 100 150 model.smoothMove
+
+-}
+animateToWithConfig : Config -> String -> Float -> Float -> Model -> Model
+animateToWithConfig config elementId targetX targetY (Model elementsDict) =
     let
         currentPos =
-            getCurrentPosition elementId (Model elementsDict)
+            getPosition elementId (Model elementsDict)
                 |> Maybe.withDefault { x = 0, y = 0 }
-
-        config =
-            defaultConfig
 
         startX =
             currentPos.x
@@ -149,7 +177,7 @@ startAnimationTo elementId targetX targetY (Model elementsDict) =
 
         -- Duration based on distance and speed (speed = pixels per second)
         duration =
-            max 100 (distance * 1000 / toFloat config.speed)
+            max 100 (distance * 1000 / config.speed)
 
         animationState =
             { startX = startX
@@ -175,10 +203,10 @@ startAnimationTo elementId targetX targetY (Model elementsDict) =
     Model updatedDict
 
 
-{-| Update the model with animation frame data
+{-| Step animations forward by the given time delta (in milliseconds)
 
-This function handles all the internal state management automatically.
-You call this in response to the animation frame messages from subscriptions.
+Call this function on each animation frame with the time delta.
+This function handles all active animations simultaneously and updates element positions.
 
     import SmoothMoveSub
 
@@ -191,17 +219,15 @@ You call this in response to the animation frame messages from subscriptions.
             AnimationFrame deltaMs ->
                 let
                     newSmoothMove =
-                        SmoothMoveSub.update deltaMs model.smoothMove
+                        SmoothMoveSub.step deltaMs model.smoothMove
                 in
                 ( { model | smoothMove = newSmoothMove }
                 , Cmd.none
                 )
 
-This function handles all active animations simultaneously and updates element positions.
-
 -}
-update : Float -> Model -> Model
-update deltaMs (Model elementsDict) =
+step : Float -> Model -> Model
+step deltaMs (Model elementsDict) =
     let
         updateElementData _ elementData =
             case elementData.animation of
@@ -245,18 +271,20 @@ isAnimating (Model elementsDict) =
     Dict.values elementsDict |> List.any (\elementData -> elementData.animation /= Nothing)
 
 
-{-| Get the current position of an element
+{-| Get the current position of a specific element
 
-    case SmoothMoveSub.getCurrentPosition "my-element" model.smoothMove of
+Returns Nothing if the element has never been animated.
+
+    case SmoothMoveSub.getPosition "my-element" model.smoothMove of
         Just { x, y } ->
-            div [ style "transform" (transform x y) ] [ text "Element" ]
+            div [ style "transform" (SmoothMoveSub.transform x y) ] [ text "Element" ]
 
         Nothing ->
             text "Element not found"
 
 -}
-getCurrentPosition : String -> Model -> Maybe { x : Float, y : Float }
-getCurrentPosition elementId (Model elementsDict) =
+getPosition : String -> Model -> Maybe { x : Float, y : Float }
+getPosition elementId (Model elementsDict) =
     Dict.get elementId elementsDict
         |> Maybe.map
             (\elementData ->
@@ -269,10 +297,43 @@ getCurrentPosition elementId (Model elementsDict) =
             )
 
 
-{-| The default configuration which can be modified
+{-| Stop animation for a specific element
 
-    import Ease
-    import SmoothMoveSub exposing (defaultConfig)
+The element will remain at its current position.
+
+    newModel =
+        SmoothMoveSub.stopAnimation "my-element" currentModel.smoothMove
+
+-}
+stopAnimation : String -> Model -> Model
+stopAnimation elementId (Model elementsDict) =
+    Model (Dict.remove elementId elementsDict)
+
+
+{-| Get all current element positions
+
+Returns a dictionary mapping element IDs to their current positions.
+
+    positions =
+        SmoothMoveSub.getAllPositions model.smoothMove
+
+-}
+getAllPositions : Model -> Dict String { x : Float, y : Float }
+getAllPositions (Model elementsDict) =
+    Dict.map
+        (\_ elementData ->
+            case elementData.animation of
+                Just animationState ->
+                    { x = animationState.currentX, y = animationState.currentY }
+
+                Nothing ->
+                    { x = elementData.lastX, y = elementData.lastY }
+        )
+        elementsDict
+
+
+{-| The default configuration which can be modified import Ease
+import SmoothMoveSub exposing (defaultConfig)
 
     defaultConfig : Config
     defaultConfig =
@@ -284,8 +345,8 @@ getCurrentPosition elementId (Model elementsDict) =
 -}
 defaultConfig : Config
 defaultConfig =
-    { speed = 200
-    , easing = Ease.outQuint
+    { speed = 400.0
+    , easing = Ease.outCubic
     , axis = Both
     }
 
@@ -357,42 +418,14 @@ updateAnimation deltaMs state =
     }
 
 
-{-| Create a CSS transform string for positioning an element
+{-| Create a CSS transform string for positioning
 
-    import Html exposing (div)
-    import Html.Attributes exposing (style)
-    import SmoothMoveSub exposing (transform)
-
-    -- Use with individual x, y values
-    div [ style "transform" (transform 100.5 200.7) ] [ text "Moving element" ]
+    div [ style "transform" (SmoothMoveSub.transform 100 200) ] [ text "Moving element" ]
 
 -}
 transform : Float -> Float -> String
 transform x y =
     "translate(" ++ String.fromFloat x ++ "px, " ++ String.fromFloat y ++ "px)"
-
-
-{-| Create a CSS transform string by looking up the element's current position in the model
-
-This convenience function eliminates the need to manually call getCurrentPosition and handle Maybe values.
-If the element is not found, it defaults to (0, 0).
-
-    import Html exposing (div)
-    import Html.Attributes exposing (style)
-    import SmoothMoveSub exposing (transformElement)
-
-    -- Much simpler - just pass the element ID and model!
-    div [ style "transform" (transformElement "my-element" model.smoothMove) ] [ text "Moving element" ]
-
--}
-transformElement : String -> Model -> String
-transformElement elementId model =
-    case getCurrentPosition elementId model of
-        Just position ->
-            transform position.x position.y
-
-        Nothing ->
-            transform 0 0
 
 
 {-| Simplified subscription function that handles animation logic internally

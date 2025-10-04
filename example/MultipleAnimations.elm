@@ -12,16 +12,16 @@ This example demonstrates MULTIPLE SIMULTANEOUS ANIMATIONS!
 
 ARCHITECTURE:
 - Model tracks multiple activeAnimations: List AnimationState
-- startAnimationTo adds new animations without stopping existing ones
+- animateTo adds new animations without stopping existing ones
 - update processes all active animations each frame
-- transformElement works for any number of elements
+- transform with getPosition works for any number of elements
 -}
 
 import Browser exposing (Document)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
-import SmoothMoveSub exposing (transformElement, startAnimationTo, isAnimating)
+import SmoothMoveSub exposing (transform, animateTo, isAnimating, getPosition)
 
 
 main =
@@ -60,21 +60,21 @@ update msg model =
         StartElementA ->
             let
                 newSmoothMove =
-                    startAnimationTo "element-a" 350 80 model.smoothMove
+                    animateTo "element-a" 350 80 model.smoothMove
             in
             ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
         StartElementB ->
             let
                 newSmoothMove =
-                    startAnimationTo "element-b" 200 250 model.smoothMove
+                    animateTo "element-b" 200 250 model.smoothMove
             in
             ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
         StartElementC ->
             let
                 newSmoothMove =
-                    startAnimationTo "element-c" 80 120 model.smoothMove
+                    animateTo "element-c" 80 120 model.smoothMove
             in
             ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
@@ -83,16 +83,16 @@ update msg model =
                 -- Chain multiple animations - all start simultaneously!
                 newSmoothMove =
                     model.smoothMove
-                        |> startAnimationTo "element-a" 400 50
-                        |> startAnimationTo "element-b" 50 400
-                        |> startAnimationTo "element-c" 250 250
+                        |> animateTo "element-a" 400 50
+                        |> animateTo "element-b" 50 400
+                        |> animateTo "element-c" 250 250
             in
             ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
         AnimationFrame deltaMs ->
             let
                 newSmoothMove =
-                    SmoothMoveSub.update deltaMs model.smoothMove
+                    SmoothMoveSub.step deltaMs model.smoothMove
             in
             ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
@@ -107,7 +107,13 @@ subscriptions model =
 
 view : Model -> Document Msg
 view model =
-    { title = "🎉 Multiple Simultaneous Animations!"
+    let
+        getTransform elementId defaultX defaultY =
+            case getPosition elementId model.smoothMove of
+                Just pos -> transform pos.x pos.y
+                Nothing -> transform defaultX defaultY
+    in
+    { title = "Multiple Smooth Animations - Fully Managed"
     , body =
         [ div [ style "position" "relative", style "width" "100vw", style "height" "100vh", style "background" "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" ]
             [ -- Element A (Red)
@@ -118,7 +124,7 @@ view model =
                 , style "height" "60px"
                 , style "background-color" "#ff6b6b"
                 , style "border-radius" "50%"
-                , style "transform" (transformElement "element-a" model.smoothMove)
+                , style "transform" (getTransform "element-a" 200 100)
                 , style "box-shadow" "0 4px 8px rgba(0,0,0,0.2)"
                 , style "display" "flex"
                 , style "align-items" "center"
@@ -136,7 +142,7 @@ view model =
                 , style "height" "60px"
                 , style "background-color" "#4ecdc4"
                 , style "border-radius" "50%"
-                , style "transform" (transformElement "element-b" model.smoothMove)
+                , style "transform" (getTransform "element-b" 150 150)
                 , style "box-shadow" "0 4px 8px rgba(0,0,0,0.2)"
                 , style "display" "flex"
                 , style "align-items" "center"
@@ -154,7 +160,7 @@ view model =
                 , style "height" "60px"
                 , style "background-color" "#95e1d3"
                 , style "border-radius" "50%"
-                , style "transform" (transformElement "element-c" model.smoothMove)
+                , style "transform" (getTransform "element-c" 100 200)
                 , style "box-shadow" "0 4px 8px rgba(0,0,0,0.2)"
                 , style "display" "flex"
                 , style "align-items" "center" 

@@ -1,7 +1,10 @@
 module ExampleMoveSub exposing (main)
 
 {-| 
-This example demonstrates the fully managed approach - no position tracking needed!
+This example demonstrate        AnimationFrame deltaMs ->
+            let
+                updatedSmoothMove =
+                    SmoothMoveSub.step deltaMs model.smoothMovee fully managed approach - no position tracking needed!
 
 BENEFITS:
 - ✅ No need to track AnimationState in your model
@@ -9,15 +12,15 @@ BENEFITS:
 - ✅ No need to handle animation completion manually
 - ✅ No need to pass Position data around in messages
 - ✅ Library manages ALL state automatically
-- ✅ Simple startAnimation and subscriptions calls
-- ✅ Get positions with transformElement when needed
+- ✅ Simple animateTo and subscriptions calls
+- ✅ Get positions with transform when needed
 
 DEVELOPER EXPERIENCE:
 - Keep only a SmoothMoveSub.Model in your model
-- Call startAnimationTo to begin animations (automatic current position)
+- Call animateTo to begin animations (automatic current position)
 - Subscribe with SmoothMoveSub.subscriptions for smooth updates (just deltaMs!)
-- Use transformElement for CSS transforms (automatic position lookup!)
-- Use getCurrentPosition only when you need the actual position values
+- Use transform for CSS transforms with getPosition!
+- Use getPosition when you need the actual position values
 - Library handles everything else automatically!
 -}
 
@@ -25,7 +28,7 @@ import Browser exposing (Document)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
-import SmoothMoveSub exposing (defaultConfig, transformElement, isAnimating, getCurrentPosition, startAnimationTo)
+import SmoothMoveSub exposing (defaultConfig, transform, isAnimating, getPosition, animateTo)
 
 
 main =
@@ -62,14 +65,14 @@ update msg model =
         StartMove targetX targetY ->
             let
                 newSmoothMove =
-                    startAnimationTo elementId targetX targetY model.smoothMove
+                    animateTo elementId targetX targetY model.smoothMove
             in
             ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
         AnimationFrame deltaMs ->
             let
                 newSmoothMove =
-                    SmoothMoveSub.update deltaMs model.smoothMove
+                    SmoothMoveSub.step deltaMs model.smoothMove
             in
             ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
@@ -84,6 +87,11 @@ subscriptions model =
 
 view : Model -> Document Msg
 view model =
+    let
+        currentPos =
+            getPosition "moving-element" model.smoothMove
+                |> Maybe.withDefault { x = 200, y = 150 }
+    in
     { title = "Smooth Move Example - Fully Managed Positions"
     , body =
         [ div [ style "position" "relative", style "width" "100vw", style "height" "100vh" ]
@@ -94,7 +102,7 @@ view model =
                 , style "height" "50px"
                 , style "background-color" "blue"
                 , style "border-radius" "50%"
-                , style "transform" (transformElement elementId model.smoothMove)
+                , style "transform" (transform currentPos.x currentPos.y)
                 , style "transition" "none"
                 ]
                 [ div [ style "color" "white", style "text-align" "center", style "line-height" "50px", style "font-size" "12px" ]
@@ -107,12 +115,7 @@ view model =
                 , button [ onClick (StartMove 0 0) ] [ text "Move to (0, 0)" ]
                 ]
             , div [ style "margin" "20px" ]
-                [ let
-                      currentPos =
-                          getCurrentPosition "moving-element" model.smoothMove
-                              |> Maybe.withDefault { x = 0, y = 0 }
-                  in
-                  text
+                [ text
                       ("Current position: ("
                           ++ String.fromFloat (toFloat (round (currentPos.x * 10)) / 10)
                           ++ ", "
@@ -128,7 +131,7 @@ view model =
                         "Animation: Stopped"
                     )
                 , br [] []
-                , text "Blue circle: Animated element using transformElement"
+                , text "Blue circle: Animated element using transform with getPosition"
                 ]
             ]
         ]
