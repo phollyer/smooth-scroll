@@ -16,7 +16,6 @@ module SmoothMoveSub exposing
     , AnimationState
     , moveTo
     , moveToWithOptions
-    , animate
     , stopAnimation
     , updateAnimation
     , isAnimationComplete
@@ -54,7 +53,6 @@ module SmoothMoveSub exposing
 @docs AnimationState
 @docs moveTo
 @docs moveToWithOptions
-@docs animate
 @docs stopAnimation
 @docs updateAnimation
 @docs isAnimationComplete
@@ -449,53 +447,6 @@ moveToWithOptions config _ startX startY targetX targetY =
     , startedAt = 0
     , duration = duration
     }
-
-
-{-| Subscribe to animation frame updates
-
-    import SmoothMoveSub exposing (animate, updateAnimation)
-
-    subscriptions : Model -> Sub Msg
-    subscriptions model =
-        case model.animationState of
-            Just state ->
-                if isAnimationComplete state then
-                    Sub.none
-
-                else
-                    animate state AnimationFrame
-
-            Nothing ->
-                Sub.none
-
-    update msg model =
-        case msg of
-            AnimationFrame deltaMs ->
-                case model.animationState of
-                    Just state ->
-                        let
-                            ( newState, position ) =
-                                updateAnimation deltaMs state
-                        in
-                        ( { model
-                            | animationState =
-                                if position.isComplete then
-                                    Nothing
-
-                                else
-                                    Just newState
-                            , elementPosition = { x = position.x, y = position.y }
-                          }
-                        , Cmd.none
-                        )
-
-                    Nothing ->
-                        ( model, Cmd.none )
-
--}
-animate : AnimationState -> (Float -> msg) -> Sub msg
-animate _ toMsg =
-    Browser.Events.onAnimationFrameDelta toMsg
 
 
 {-| Stop an ongoing animation
