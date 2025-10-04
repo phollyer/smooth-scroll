@@ -81,16 +81,13 @@ update msg model =
         StartAll ->
             let
                 -- Chain multiple animations - all start simultaneously!
-                smoothMove1 =
-                    startAnimationTo "element-a" 400 50 model.smoothMove
-                
-                smoothMove2 =
-                    startAnimationTo "element-b" 50 400 smoothMove1
-                    
-                smoothMove3 = 
-                    startAnimationTo "element-c" 250 250 smoothMove2
+                newSmoothMove =
+                    model.smoothMove
+                        |> startAnimationTo "element-a" 400 50
+                        |> startAnimationTo "element-b" 50 400
+                        |> startAnimationTo "element-c" 250 250
             in
-            ( { model | smoothMove = smoothMove3 }, Cmd.none )
+            ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
         AnimationFrame deltaMs ->
             let

@@ -6,7 +6,6 @@ module SmoothMoveSub exposing
     , Position
     , startAnimation
     , startAnimationWithOptions
-    , updateModel
     , update
     , startAnimationTo
     , subscriptions
@@ -43,7 +42,6 @@ module SmoothMoveSub exposing
 @docs Position
 @docs startAnimation
 @docs startAnimationWithOptions
-@docs updateModel
 @docs update
 @docs startAnimationTo
 @docs subscriptions
@@ -74,6 +72,7 @@ module SmoothMoveSub exposing
 -}
 
 import Browser.Events
+import Dict exposing (Dict)
 import Ease
 
 
@@ -112,8 +111,7 @@ type alias Position =
 {-| Animation state for managing ongoing animations (Legacy API)
 -}
 type alias AnimationState =
-    { elementId : String
-    , startX : Float
+    { startX : Float
     , startY : Float
     , targetX : Float
     , targetY : Float
@@ -128,38 +126,29 @@ type alias AnimationState =
 This model handles all animation state AND element positions internally, so developers
 don't need to track AnimationState, completion logic, or current positions manually.
 
+Uses a Dict for O(1) lookups and better performance with many elements.
+
 -}
 type Model
-    = Model
-        { elements : List ElementState
-        , activeAnimations : List AnimationState
-        }
+    = Model (Dict String ElementData)
 
 
-type alias ElementState =
-    { elementId : String
-    , currentX : Float
+type alias ElementData =
+    { currentX : Float
     , currentY : Float
+    , animation : Maybe AnimationState
     }
 
 
-{-| Initialize an empty SmoothMoveSub model
+{-| Initialize the model with no active animations
 
-    import SmoothMoveSub
-
-    type alias Model =
-        { smoothMove : SmoothMoveSub.Model
-        }
-
-    init : Model
     init =
-        { smoothMove = SmoothMoveSub.init
-        }
+        SmoothMoveSub.init
 
 -}
 init : Model
 init =
-    Model { elements = [], activeAnimations = [] }
+    Model Dict.empty
 
 
 {-| Start an animation using the default configuration
@@ -212,12 +201,8 @@ startAnimation elementId startX startY targetX targetY model =
 
 -}
 startAnimationWithOptions : Config -> String -> Float -> Float -> Float -> Float -> Model -> Model
-startAnimationWithOptions config elementId startX startY targetX targetY (Model modelData) =
+startAnimationWithOptions config elementId startX startY targetX targetY (Model elementsDict) =
     let
-        -- Update or add element position
-        updatedElements =
-            updateElementPosition elementId startX startY modelData.elements
-
         distance =
             case config.axis of
                 X ->
@@ -234,8 +219,7 @@ startAnimationWithOptions config elementId startX startY targetX targetY (Model 
             max 100 (distance * 1000 / toFloat config.speed)
 
         animationState =
-            { elementId = elementId
-            , startX = startX
+            { startX = startX
             , startY = startY
             , targetX = targetX
             , targetY = targetY
@@ -244,11 +228,16 @@ startAnimationWithOptions config elementId startX startY targetX targetY (Model 
             , duration = duration
             }
 
-        -- Remove any existing animation for this element and add the new one
-        filteredAnimations =
-            List.filter (\anim -> anim.elementId /= elementId) modelData.activeAnimations
+        elementData =
+            { currentX = startX
+            , currentY = startY
+            , animation = Just animationState
+            }
+
+        updatedDict =
+            Dict.insert elementId elementData elementsDict
     in
-    Model { elements = updatedElements, activeAnimations = animationState :: filteredAnimations }
+    Model updatedDict
 
 
 {-| Start an animation to a target position, automatically using the current position as the starting point
@@ -294,66 +283,46 @@ You call this in response to the animation frame messages from subscriptions.
                 , Cmd.none
                 )
 
--}
-updateModel : Float -> Model -> ( Model, Maybe Position )
-updateModel deltaMs model =
-    let
-        updatedModel =
-            update deltaMs model
-    in
-    -- Return last position for backward compatibility (deprecated usage)
-    case getFirstActiveAnimation updatedModel of
-        Just state ->
-            let
-                ( _, position ) =
-                    updateAnimation deltaMs state
-            in
-            ( updatedModel, Just position )
-
-        Nothing ->
-            ( updatedModel, Nothing )
-
-
-{-| Update the model with animation frame data (supports multiple animations)
-
 This function handles all active animations simultaneously and updates element positions.
 
 -}
 update : Float -> Model -> Model
-update deltaMs (Model modelData) =
+update deltaMs (Model elementsDict) =
     let
-        -- Update all active animations
-        ( remainingAnimations, updatedElements ) =
-            List.foldl
-                (\state ( animations, elements ) ->
+        updateElementData elementId elementData =
+            case elementData.animation of
+                -- No animation, keep current state
+                Nothing ->
+                    elementData
+
+                Just animationState ->
                     let
                         ( newState, position ) =
-                            updateAnimation deltaMs state
+                            updateAnimation deltaMs animationState
 
-                        newElements =
-                            updateElementPosition state.elementId position.x position.y elements
+                        -- Add elementId to position since updateAnimation no longer has access to it
+                        positionWithId =
+                            { position | elementId = elementId }
                     in
-                    if position.isComplete then
-                        ( animations, newElements )
-                        -- Animation complete, don't keep it
+                    if positionWithId.isComplete then
+                        -- Animation complete
+                        { elementData
+                            | currentX = positionWithId.x
+                            , currentY = positionWithId.y
+                            , animation = Nothing
+                        }
 
                     else
-                        ( newState :: animations, newElements )
-                 -- Animation continues
-                )
-                ( [], modelData.elements )
-                modelData.activeAnimations
+                        { elementData
+                            | currentX = positionWithId.x
+                            , currentY = positionWithId.y
+                            , animation = Just newState
+                        }
+
+        updatedDict =
+            Dict.map updateElementData elementsDict
     in
-    Model { elements = updatedElements, activeAnimations = List.reverse remainingAnimations }
-
-
-
--- Helper function to get first active animation (for backward compatibility)
-
-
-getFirstActiveAnimation : Model -> Maybe AnimationState
-getFirstActiveAnimation (Model modelData) =
-    List.head modelData.activeAnimations
+    Model updatedDict
 
 
 {-| Check if the model is idle (no animation running)
@@ -366,8 +335,8 @@ getFirstActiveAnimation (Model modelData) =
 
 -}
 isIdle : Model -> Bool
-isIdle (Model modelData) =
-    List.isEmpty modelData.activeAnimations
+isIdle (Model elementsDict) =
+    not (Dict.values elementsDict |> List.any (\elementData -> elementData.animation /= Nothing))
 
 
 {-| Check if the model is animating
@@ -380,8 +349,8 @@ isIdle (Model modelData) =
 
 -}
 isAnimating : Model -> Bool
-isAnimating (Model modelData) =
-    not (List.isEmpty modelData.activeAnimations)
+isAnimating (Model elementsDict) =
+    Dict.values elementsDict |> List.any (\elementData -> elementData.animation /= Nothing)
 
 
 {-| Get the current position of an element
@@ -395,11 +364,9 @@ isAnimating (Model modelData) =
 
 -}
 getCurrentPosition : String -> Model -> Maybe { x : Float, y : Float }
-getCurrentPosition elementId (Model modelData) =
-    modelData.elements
-        |> List.filter (\element -> element.elementId == elementId)
-        |> List.head
-        |> Maybe.map (\element -> { x = element.currentX, y = element.currentY })
+getCurrentPosition elementId (Model elementsDict) =
+    Dict.get elementId elementsDict
+        |> Maybe.map (\elementData -> { x = elementData.currentX, y = elementData.currentY })
 
 
 {-| Get all element IDs currently tracked by the model
@@ -409,30 +376,8 @@ getCurrentPosition elementId (Model modelData) =
 
 -}
 getElementIds : Model -> List String
-getElementIds (Model modelData) =
-    List.map .elementId modelData.elements
-
-
-{-| Helper function to update element position in the list
--}
-updateElementPosition : String -> Float -> Float -> List ElementState -> List ElementState
-updateElementPosition elementId x y elements =
-    let
-        updateElement element =
-            if element.elementId == elementId then
-                { element | currentX = x, currentY = y }
-
-            else
-                element
-
-        elementExists =
-            List.any (\element -> element.elementId == elementId) elements
-    in
-    if elementExists then
-        List.map updateElement elements
-
-    else
-        { elementId = elementId, currentX = x, currentY = y } :: elements
+getElementIds (Model elementsDict) =
+    Dict.keys elementsDict
 
 
 {-| The default configuration which can be modified
@@ -478,7 +423,7 @@ moveTo =
 
 -}
 moveToWithOptions : Config -> String -> Float -> Float -> Float -> Float -> AnimationState
-moveToWithOptions config elementId startX startY targetX targetY =
+moveToWithOptions config _ startX startY targetX targetY =
     let
         distance =
             case config.axis of
@@ -495,8 +440,7 @@ moveToWithOptions config elementId startX startY targetX targetY =
         duration =
             max 100 (distance * 1000 / toFloat config.speed)
     in
-    { elementId = elementId
-    , startX = startX
+    { startX = startX
     , startY = startY
     , targetX = targetX
     , targetY = targetY
@@ -606,7 +550,7 @@ updateAnimation deltaMs state =
         position =
             { x = currentX
             , y = currentY
-            , elementId = state.elementId
+            , elementId = "" -- Will be filled by caller
             , isComplete = isComplete
             }
     in
@@ -711,7 +655,7 @@ automatically stop sending updates when the animation is complete.
 -}
 subscriptions : Model -> (Float -> msg) -> Sub msg
 subscriptions (Model modelData) toMsg =
-    if List.isEmpty modelData.activeAnimations then
+    if not (Dict.values modelData |> List.any (\elementData -> elementData.animation /= Nothing)) then
         Sub.none
 
     else
