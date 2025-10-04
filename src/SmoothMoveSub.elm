@@ -66,23 +66,13 @@ type Axis
     | Both
 
 
-
--- Internal position type for animation state management
-
-
-type alias Position =
-    { x : Float
-    , y : Float
-    , elementId : String
-    , isComplete : Bool
-    }
-
-
 type alias AnimationState =
     { startX : Float
     , startY : Float
     , targetX : Float
     , targetY : Float
+    , currentX : Float
+    , currentY : Float
     , config : Config
     , startedAt : Float
     , duration : Float
@@ -102,8 +92,8 @@ type Model
 
 
 type alias ElementData =
-    { currentX : Float
-    , currentY : Float
+    { lastX : Float
+    , lastY : Float
     , animation : Maybe AnimationState
     }
 
@@ -166,14 +156,16 @@ startAnimationTo elementId targetX targetY (Model elementsDict) =
             , startY = startY
             , targetX = targetX
             , targetY = targetY
+            , currentX = startX
+            , currentY = startY
             , config = config
             , startedAt = 0
             , duration = duration
             }
 
         elementData =
-            { currentX = startX
-            , currentY = startY
+            { lastX = startX
+            , lastY = startY
             , animation = Just animationState
             }
 
@@ -211,7 +203,7 @@ This function handles all active animations simultaneously and updates element p
 update : Float -> Model -> Model
 update deltaMs (Model elementsDict) =
     let
-        updateElementData elementId elementData =
+        updateElementData _ elementData =
             case elementData.animation of
                 -- No animation, keep current state
                 Nothing ->
@@ -219,27 +211,19 @@ update deltaMs (Model elementsDict) =
 
                 Just animationState ->
                     let
-                        ( newState, position ) =
+                        updatedState =
                             updateAnimation deltaMs animationState
-
-                        -- Add elementId to position since updateAnimation no longer has access to it
-                        positionWithId =
-                            { position | elementId = elementId }
                     in
-                    if positionWithId.isComplete then
-                        -- Animation complete
+                    if isAnimationComplete updatedState then
+                        -- Animation complete, save final position
                         { elementData
-                            | currentX = positionWithId.x
-                            , currentY = positionWithId.y
-                            , animation = Nothing
+                            | animation = Nothing
+                            , lastX = updatedState.targetX
+                            , lastY = updatedState.targetY
                         }
 
                     else
-                        { elementData
-                            | currentX = positionWithId.x
-                            , currentY = positionWithId.y
-                            , animation = Just newState
-                        }
+                        { elementData | animation = Just updatedState }
 
         updatedDict =
             Dict.map updateElementData elementsDict
@@ -274,7 +258,15 @@ isAnimating (Model elementsDict) =
 getCurrentPosition : String -> Model -> Maybe { x : Float, y : Float }
 getCurrentPosition elementId (Model elementsDict) =
     Dict.get elementId elementsDict
-        |> Maybe.map (\elementData -> { x = elementData.currentX, y = elementData.currentY })
+        |> Maybe.map
+            (\elementData ->
+                case elementData.animation of
+                    Just animationState ->
+                        { x = animationState.currentX, y = animationState.currentY }
+
+                    Nothing ->
+                        { x = elementData.lastX, y = elementData.lastY }
+            )
 
 
 {-| The default configuration which can be modified
@@ -298,9 +290,35 @@ defaultConfig =
     }
 
 
-{-| Update animation state with elapsed time and get current position
+{-| Check if animation is complete by comparing current position to target position
 -}
-updateAnimation : Float -> AnimationState -> ( AnimationState, Position )
+isAnimationComplete : AnimationState -> Bool
+isAnimationComplete state =
+    let
+        xComplete =
+            case state.config.axis of
+                Y ->
+                    True
+
+                -- X axis not animated, so always complete
+                _ ->
+                    abs (state.currentX - state.targetX) < 0.1
+
+        yComplete =
+            case state.config.axis of
+                X ->
+                    True
+
+                -- Y axis not animated, so always complete
+                _ ->
+                    abs (state.currentY - state.targetY) < 0.1
+    in
+    xComplete && yComplete
+
+
+{-| Update animation state with elapsed time and current position
+-}
+updateAnimation : Float -> AnimationState -> AnimationState
 updateAnimation deltaMs state =
     let
         newElapsedTime =
@@ -331,21 +349,12 @@ updateAnimation deltaMs state =
 
                 _ ->
                     state.startY + (state.targetY - state.startY) * easedProgress
-
-        isComplete =
-            progress >= 1.0
-
-        updatedState =
-            { state | startedAt = newElapsedTime }
-
-        position =
-            { x = currentX
-            , y = currentY
-            , elementId = "" -- Will be filled by caller
-            , isComplete = isComplete
-            }
     in
-    ( updatedState, position )
+    { state
+        | startedAt = newElapsedTime
+        , currentX = currentX
+        , currentY = currentY
+    }
 
 
 {-| Create a CSS transform string for positioning an element

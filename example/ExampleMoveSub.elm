@@ -25,7 +25,7 @@ import Browser exposing (Document)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
-import SmoothMoveSub exposing (defaultConfig, transform, transformElement, isAnimating, getCurrentPosition, startAnimationTo)
+import SmoothMoveSub exposing (defaultConfig, transformElement, isAnimating, getCurrentPosition, startAnimationTo)
 
 
 main =
