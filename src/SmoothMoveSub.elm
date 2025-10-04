@@ -3,7 +3,6 @@ module SmoothMoveSub exposing
     , defaultConfig
     , Model
     , init
-    , Position
     , startAnimation
     , startAnimationWithOptions
     , update
@@ -22,7 +21,6 @@ module SmoothMoveSub exposing
     , updateAnimation
     , isAnimationComplete
     , transform
-    , transformPosition
     , transformElement
     )
 
@@ -39,7 +37,6 @@ module SmoothMoveSub exposing
 
 @docs Model
 @docs init
-@docs Position
 @docs startAnimation
 @docs startAnimationWithOptions
 @docs update
@@ -66,7 +63,6 @@ module SmoothMoveSub exposing
 # Styling Helper
 
 @docs transform
-@docs transformPosition
 @docs transformElement
 
 -}
@@ -98,7 +94,12 @@ type Axis
     | Both
 
 
-{-| Position information sent through subscriptions
+{-| Internal position information used for animation state management
+
+This type is used internally by updateAnimation to communicate position data
+and completion status. Subscriptions only send deltaMs (Float), not Position data.
+For public position access, use getCurrentPosition or transformElement functions.
+
 -}
 type alias Position =
     { x : Float
@@ -577,21 +578,6 @@ isAnimationComplete state =
 transform : Float -> Float -> String
 transform x y =
     "translate(" ++ String.fromFloat x ++ "px, " ++ String.fromFloat y ++ "px)"
-
-
-{-| Create a CSS transform string from a Position record
-
-    import Html exposing (div)
-    import Html.Attributes exposing (style)
-    import SmoothMoveSub exposing (transformPosition)
-
-    -- Use directly with a Position record
-    div [ style "transform" (transformPosition position) ] [ text "Moving element" ]
-
--}
-transformPosition : Position -> String
-transformPosition position =
-    transform position.x position.y
 
 
 {-| Create a CSS transform string by looking up the element's current position in the model
