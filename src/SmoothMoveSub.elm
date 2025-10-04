@@ -7,6 +7,8 @@ module SmoothMoveSub exposing
     , startAnimation
     , startAnimationWithOptions
     , updateModel
+    , update
+    , startAnimationTo
     , subscriptions
     , isIdle
     , isAnimating
@@ -22,6 +24,7 @@ module SmoothMoveSub exposing
     , isAnimationComplete
     , transform
     , transformPosition
+    , transformElement
     )
 
 {-|
@@ -41,6 +44,8 @@ module SmoothMoveSub exposing
 @docs startAnimation
 @docs startAnimationWithOptions
 @docs updateModel
+@docs update
+@docs startAnimationTo
 @docs subscriptions
 @docs isIdle
 @docs isAnimating
@@ -64,6 +69,7 @@ module SmoothMoveSub exposing
 
 @docs transform
 @docs transformPosition
+@docs transformElement
 
 -}
 
@@ -126,7 +132,7 @@ don't need to track AnimationState, completion logic, or current positions manua
 type Model
     = Model
         { elements : List ElementState
-        , activeAnimation : Maybe AnimationState
+        , activeAnimations : List AnimationState
         }
 
 
@@ -153,7 +159,7 @@ type alias ElementState =
 -}
 init : Model
 init =
-    Model { elements = [], activeAnimation = Nothing }
+    Model { elements = [], activeAnimations = [] }
 
 
 {-| Start an animation using the default configuration
@@ -237,8 +243,33 @@ startAnimationWithOptions config elementId startX startY targetX targetY (Model 
             , startedAt = 0
             , duration = duration
             }
+
+        -- Remove any existing animation for this element and add the new one
+        filteredAnimations =
+            List.filter (\anim -> anim.elementId /= elementId) modelData.activeAnimations
     in
-    Model { elements = updatedElements, activeAnimation = Just animationState }
+    Model { elements = updatedElements, activeAnimations = animationState :: filteredAnimations }
+
+
+{-| Start an animation to a target position, automatically using the current position as the starting point
+
+This is a convenience function that combines getCurrentPosition with startAnimation.
+If the element has no current position, it defaults to (0, 0).
+
+    import SmoothMoveSub
+
+    newModel =
+        SmoothMoveSub.startAnimationTo "my-element" 200 300 model.smoothMove
+
+-}
+startAnimationTo : String -> Float -> Float -> Model -> Model
+startAnimationTo elementId targetX targetY model =
+    let
+        currentPos =
+            getCurrentPosition elementId model
+                |> Maybe.withDefault { x = 0, y = 0 }
+    in
+    startAnimation elementId currentPos.x currentPos.y targetX targetY model
 
 
 {-| Update the model with animation frame data
@@ -249,44 +280,80 @@ You call this in response to the animation frame messages from subscriptions.
     import SmoothMoveSub
 
     type Msg
-        = AnimationFrame Float Position
+        = AnimationFrame Float
         | StartMove Float Float
 
     update msg model =
         case msg of
-            AnimationFrame deltaMs position ->
+            AnimationFrame deltaMs ->
                 let
                     newSmoothMove =
-                        SmoothMoveSub.updateModel deltaMs model.smoothMove
+                        SmoothMoveSub.update deltaMs model.smoothMove
                 in
-                ( { model
-                    | smoothMove = newSmoothMove
-                    , elementPosition = { x = position.x, y = position.y }
-                  }
+                ( { model | smoothMove = newSmoothMove }
                 , Cmd.none
                 )
 
 -}
 updateModel : Float -> Model -> ( Model, Maybe Position )
-updateModel deltaMs (Model modelData) =
-    case modelData.activeAnimation of
-        Nothing ->
-            ( Model modelData, Nothing )
-
+updateModel deltaMs model =
+    let
+        updatedModel =
+            update deltaMs model
+    in
+    -- Return last position for backward compatibility (deprecated usage)
+    case getFirstActiveAnimation updatedModel of
         Just state ->
             let
-                ( newState, position ) =
+                ( _, position ) =
                     updateAnimation deltaMs state
-
-                -- Update element position in our internal tracking
-                updatedElements =
-                    updateElementPosition state.elementId position.x position.y modelData.elements
             in
-            if position.isComplete then
-                ( Model { elements = updatedElements, activeAnimation = Nothing }, Just position )
+            ( updatedModel, Just position )
 
-            else
-                ( Model { elements = updatedElements, activeAnimation = Just newState }, Just position )
+        Nothing ->
+            ( updatedModel, Nothing )
+
+
+{-| Update the model with animation frame data (supports multiple animations)
+
+This function handles all active animations simultaneously and updates element positions.
+
+-}
+update : Float -> Model -> Model
+update deltaMs (Model modelData) =
+    let
+        -- Update all active animations
+        ( remainingAnimations, updatedElements ) =
+            List.foldl
+                (\state ( animations, elements ) ->
+                    let
+                        ( newState, position ) =
+                            updateAnimation deltaMs state
+
+                        newElements =
+                            updateElementPosition state.elementId position.x position.y elements
+                    in
+                    if position.isComplete then
+                        ( animations, newElements )
+                        -- Animation complete, don't keep it
+
+                    else
+                        ( newState :: animations, newElements )
+                 -- Animation continues
+                )
+                ( [], modelData.elements )
+                modelData.activeAnimations
+    in
+    Model { elements = updatedElements, activeAnimations = List.reverse remainingAnimations }
+
+
+
+-- Helper function to get first active animation (for backward compatibility)
+
+
+getFirstActiveAnimation : Model -> Maybe AnimationState
+getFirstActiveAnimation (Model modelData) =
+    List.head modelData.activeAnimations
 
 
 {-| Check if the model is idle (no animation running)
@@ -300,12 +367,7 @@ updateModel deltaMs (Model modelData) =
 -}
 isIdle : Model -> Bool
 isIdle (Model modelData) =
-    case modelData.activeAnimation of
-        Nothing ->
-            True
-
-        Just _ ->
-            False
+    List.isEmpty modelData.activeAnimations
 
 
 {-| Check if the model is animating
@@ -318,8 +380,8 @@ isIdle (Model modelData) =
 
 -}
 isAnimating : Model -> Bool
-isAnimating model =
-    not (isIdle model)
+isAnimating (Model modelData) =
+    not (List.isEmpty modelData.activeAnimations)
 
 
 {-| Get the current position of an element
@@ -588,6 +650,29 @@ transformPosition position =
     transform position.x position.y
 
 
+{-| Create a CSS transform string by looking up the element's current position in the model
+
+This convenience function eliminates the need to manually call getCurrentPosition and handle Maybe values.
+If the element is not found, it defaults to (0, 0).
+
+    import Html exposing (div)
+    import Html.Attributes exposing (style)
+    import SmoothMoveSub exposing (transformElement)
+
+    -- Much simpler - just pass the element ID and model!
+    div [ style "transform" (transformElement "my-element" model.smoothMove) ] [ text "Moving element" ]
+
+-}
+transformElement : String -> Model -> String
+transformElement elementId model =
+    case getCurrentPosition elementId model of
+        Just position ->
+            transform position.x position.y
+
+        Nothing ->
+            transform 0 0
+
+
 {-| Simplified subscription function that handles animation logic internally
 
 This function takes care of all the animation frame updates and state management.
@@ -598,52 +683,36 @@ automatically stop sending updates when the animation is complete.
 
     type Msg
         = StartMove Float Float
-        | PositionUpdate Position
+        | AnimationFrame Float
         | NoOp
 
     subscriptions : Model -> Sub Msg
     subscriptions model =
-        SmoothMoveSub.subscriptions model.animationState PositionUpdate
+        SmoothMoveSub.subscriptions model.smoothMove AnimationFrame
 
     update msg model =
         case msg of
             StartMove targetX targetY ->
                 let
-                    animState =
-                        moveTo "element-id" model.position.x model.position.y targetX targetY
+                    newSmoothMove =
+                        startAnimationTo "element-id" targetX targetY model.smoothMove
                 in
-                ( { model | animationState = Just animState }, Cmd.none )
+                ( { model | smoothMove = newSmoothMove }, Cmd.none )
 
-            PositionUpdate position ->
-                ( { model
-                    | position = { x = position.x, y = position.y }
-                    , animationState =
-                        if position.isComplete then
-                            Nothing
-
-                        else
-                            model.animationState
-                  }
+            AnimationFrame deltaMs ->
+                let
+                    newSmoothMove =
+                        SmoothMoveSub.update deltaMs model.smoothMove
+                in
+                ( { model | smoothMove = newSmoothMove }
                 , Cmd.none
                 )
 
 -}
-subscriptions : Model -> (Float -> Position -> msg) -> Sub msg
+subscriptions : Model -> (Float -> msg) -> Sub msg
 subscriptions (Model modelData) toMsg =
-    case modelData.activeAnimation of
-        Nothing ->
-            Sub.none
+    if List.isEmpty modelData.activeAnimations then
+        Sub.none
 
-        Just state ->
-            if isAnimationComplete state then
-                Sub.none
-
-            else
-                Browser.Events.onAnimationFrameDelta
-                    (\deltaMs ->
-                        let
-                            ( _, position ) =
-                                updateAnimation deltaMs state
-                        in
-                        toMsg deltaMs position
-                    )
+    else
+        Browser.Events.onAnimationFrameDelta toMsg
